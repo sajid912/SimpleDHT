@@ -9,6 +9,7 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.net.Uri;
 
+//Edited by sajid again
 public class SimpleDhtProvider extends ContentProvider {
 
     @Override
