@@ -6,6 +6,7 @@ import android.text.method.ScrollingMovementMethod;
 import android.view.Menu;
 import android.widget.TextView;
 
+// Edited
 public class SimpleDhtActivity extends Activity {
 
     @Override

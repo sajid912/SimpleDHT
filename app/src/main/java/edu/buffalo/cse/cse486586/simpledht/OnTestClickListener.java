@@ -10,6 +10,7 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.TextView;
 
+// Edited by sajid
 public class OnTestClickListener implements OnClickListener {
 
 	private static final String TAG = OnTestClickListener.class.getName();
