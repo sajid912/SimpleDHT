@@ -50,7 +50,21 @@ public class OnTestClickListener implements OnClickListener {
 
 	@Override
 	public void onClick(View v) {
-		new Task().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+
+		if(v.getId() == R.id.button1) // LDump button
+		{
+
+		}
+		else if(v.getId() == R.id.button2) // GDump button
+		{
+
+		}
+		else if(v.getId() == R.id.button3) // Test button
+		{
+			new Task().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+		}
+
+
 	}
 
 	private class Task extends AsyncTask<Void, String, Void> {
