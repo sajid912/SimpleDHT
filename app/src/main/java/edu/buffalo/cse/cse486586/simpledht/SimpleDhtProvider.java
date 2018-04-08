@@ -47,6 +47,13 @@ import static android.content.ContentValues.TAG;
 public class SimpleDhtProvider extends ContentProvider {
 
 
+    private static String EMULATOR_0_HASH = "";
+    private static String EMULATOR_1_HASH = "";
+    private static String EMULATOR_2_HASH = "";
+    private static String EMULATOR_3_HASH = "";
+    private static String EMULATOR_4_HASH = "";
+    private static String CHECK = "";
+
     private static final String EMULATOR0_PORT = "11108";
     private ArrayList<Node> ringList = new ArrayList<Node>();
     private Node my_node;
@@ -104,23 +111,131 @@ public class SimpleDhtProvider extends ContentProvider {
         // TODO Auto-generated method stub
 
         Log.v("insert", values.toString());
+        String key = values.getAsString("key");
+        String value = values.getAsString("value");
 
-        try {
-        String filename = values.getAsString("key");
-        String hashedFileName = genHash(filename);
-        Log.v("hashedFileName", hashedFileName);
-        String value = values.getAsString("value") + "\n";
+        insertValues(key, value);
+        return uri;
+    }
 
-        FileOutputStream outputStream;
-        outputStream = getContext().openFileOutput(filename, Context.MODE_PRIVATE);
-        outputStream.write(value.getBytes());
-        outputStream.close();
+    private void insertValues(String key, String value)
+    {
 
-        } catch (Exception e) {
-            Log.e(TAG, "File write failed");
+        boolean forward = false;
+
+        if(MY_PREDECESSOR_PORT.isEmpty() && MY_SUCCESSOR_PORT.isEmpty())
+        {
+            // Node ring hasn't formed yet, so save locally
+        }
+        else
+        {
+            String my_nodeId = my_node.getNodeId();
+            int pre_p = Integer.parseInt(MY_PREDECESSOR_PORT);
+            int pre_id = pre_p/2;
+            String preIdStr = String.valueOf(pre_id);
+            String my_preId = genHash(preIdStr);
+            //String my_sucId = genHash(MY_SUCCESSOR_PORT);
+
+            checkValues(key);
+            Log.d(TAG,"Key:"+key);
+            String hashedKey = genHash(key);
+
+            int comparision = hashedKey.compareTo(my_nodeId);
+            Log.d(TAG,"Comparision of hashedKey and my node id:"+comparision);
+
+            if(hashedKey.compareTo(my_nodeId)>0)
+            {
+                int c1= my_preId.compareTo(my_nodeId);
+                int c2= hashedKey.compareTo(my_preId);
+                Log.d(TAG, "Comparision of pred and my node id:"+c1);
+                Log.d(TAG, "Comparision of hashedKey and pred:"+c2);
+
+                if(my_preId.compareTo(my_nodeId)>0 && hashedKey.compareTo(my_preId)>0) // My pre is greater than me && key is greater than my pre
+                {
+                    // save the key locally
+                    Log.d(TAG, "Higher than large node, save it");
+                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
+
+                }
+                else
+                {
+                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
+
+                    forward = true; // Forward to successor
+                    Log.d(TAG,"Key greater than me, forward to successor");
+                }
+
+            } else if(hashedKey.compareTo(my_nodeId)<0)
+            {
+                int c1= my_preId.compareTo(my_nodeId);
+                int c2= hashedKey.compareTo(my_preId);
+                Log.d(TAG, "Comparision of pred and my node id:"+c1);
+                Log.d(TAG, "Comparision of hashedKey and pred:"+c2);
+
+                if(hashedKey.compareTo(my_preId)>0)
+                {
+                    // Store the value locally
+                    Log.d(TAG, "Key less than me, greater than pred, save it");
+                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
+
+                }
+                else if(my_preId.compareTo(my_nodeId)>0) // My pre is greater than me && key is less than me
+                {
+                    // save locally
+                    Log.d(TAG, "Smaller than small node, so save it");
+                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
+
+                }
+               else
+                {
+                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
+                    forward = true;
+                    Log.d(TAG,"Key smaller than me and my pred, so forward");
+                }
+
+            }
         }
 
-        return uri;
+
+        if(forward)
+        {
+            Log.d(TAG,"Forwarding the request");
+            new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, MY_SUCCESSOR_PORT,
+                    constructDataObject(key, value), Constants.DATA_FORWARD_REQUEST);
+        }
+        else
+        {
+            Log.d(TAG,"Trying to save locally");
+            try {
+                value = value + "\n";
+                FileOutputStream outputStream;
+                outputStream = getContext().openFileOutput(key, Context.MODE_PRIVATE);
+                outputStream.write(value.getBytes());
+                outputStream.close();
+
+            } catch (Exception e) {
+                Log.e(TAG, "File write failed");
+            }
+        }
+
+    }
+
+    private String constructDataObject(String key, String value)
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 3); // 3 stands for data forward among nodes
+            jsonObject.put(Constants.DATA_ORIGIN_PORT, my_node.getPortNo());
+            jsonObject.put(Constants.KEY, key); // port no of predecessor
+            jsonObject.put(Constants.VALUE, value); // port no of successor
+            jsonObject.put(Constants.MY_PORT, my_node.getPortNo());
+            //jsonObject.put(Constants.COUNT, count);
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
     }
 
     @Override
@@ -129,6 +244,22 @@ public class SimpleDhtProvider extends ContentProvider {
         Log.v(TAG, "Content provider created!!");
         onNodeStart(getEmulatorId());
         return false;
+    }
+
+    private void checkValues(String key)
+    {
+        EMULATOR_0_HASH = genHash("5554");
+        EMULATOR_1_HASH = genHash("5556");
+        EMULATOR_2_HASH = genHash("5558");
+        EMULATOR_3_HASH = genHash("5560");
+        EMULATOR_4_HASH = genHash("5562");
+        String hash = genHash(key);
+
+        Log.d(TAG, hash.compareTo(EMULATOR_4_HASH)+" check0");
+        Log.d(TAG, hash.compareTo(EMULATOR_1_HASH)+" check1");
+        Log.d(TAG, hash.compareTo(EMULATOR_0_HASH)+" check2");
+        Log.d(TAG, hash.compareTo(EMULATOR_2_HASH)+" check3");
+        Log.d(TAG, hash.compareTo(EMULATOR_3_HASH)+" check4");
     }
 
     @Override
@@ -203,6 +334,7 @@ public class SimpleDhtProvider extends ContentProvider {
       return "";
     }
 
+
     private String getFileContentFromName(String fileName)
     {
 
@@ -238,8 +370,13 @@ public class SimpleDhtProvider extends ContentProvider {
     private void onNodeStart(String emulatorId)
     {
         try {
-            ServerSocket serverSocket = new ServerSocket(SERVER_PORT);
+            //ServerSocket serverSocket = new ServerSocket(SERVER_PORT);
+
+            ServerSocket serverSocket = new ServerSocket(); // <-- create an unbound socket first
+            serverSocket.setReuseAddress(true);
+            serverSocket.bind(new InetSocketAddress(SERVER_PORT));
             new ServerTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, serverSocket);
+            Log.d(TAG, "Creating socket now");
 
         } catch (IOException e) {
             Log.e(TAG, "Can't create a ServerSocket");
@@ -253,12 +390,12 @@ public class SimpleDhtProvider extends ContentProvider {
         if(!my_node.getPortNo().equals(EMULATOR0_PORT))
         {
           //  All emulators except 5554 will request 5554 to join DHT
-            new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, EMULATOR0_PORT, constructJsonObject(), Constants.JOIN_REQUEST);
+            new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, EMULATOR0_PORT, constructNodeJoinObject(), Constants.JOIN_REQUEST);
 
         }
     }
 
-    private String constructJsonObject()
+    private String constructNodeJoinObject()
     {
         JSONObject jsonObject = new JSONObject();
 
@@ -373,14 +510,19 @@ public class SimpleDhtProvider extends ContentProvider {
                     int status = jsonObject.getInt(Constants.STATUS);
                     if (status == 0) {
                         String reply = handleNodeJoinRequest(message);
-                        //Log.d(TAG,"Status is 0 and replying"+reply);
+                        Log.d(TAG,"Status is 0");
                         bufferedWriter.write(reply);
-                        publishProgress(Constants.UPDATE_NEIGHBORS);
+                        publishProgress(Constants.UPDATE_NEIGHBORS_LOCAL);
 
                     } else if(status == 2){
                         // Neighbor update msg
                         Log.d(TAG,"Status is 2");
-                        updateMyNeighborsFromRemote(message);
+                        publishProgress(Constants.UPDATE_NEIGHBORS_REMOTE, message);
+
+                    } else if(status == 3){
+                        // Data forward request
+                        Log.d(TAG,"Status is 3");
+                        publishProgress(Constants.DATA_FORWARD_REQUEST, message);
                     }
 
                     bufferedWriter.flush();
@@ -403,12 +545,22 @@ public class SimpleDhtProvider extends ContentProvider {
         protected void onProgressUpdate(String... strings) {
 
             //Log.d(TAG, "Received:" + strings[0] + " My port:" + myPort);
-            if(strings[0].equals(Constants.UPDATE_NEIGHBORS))
+            if(strings[0].equals(Constants.UPDATE_NEIGHBORS_LOCAL))
             {
-                Log.v(TAG,"Updating neighbors");
+                Log.v(TAG,"Updating neighbors locally");
                 updateNeighbours(remoteNode, predecessorNode, successorNode);
             }
+            else if(strings[0].equals(Constants.UPDATE_NEIGHBORS_REMOTE))
+            {
+                Log.v(TAG,"Updating neighbors remotely");
+                updateMyNeighborsFromRemote(strings[1]);
+            }
+            else if(strings[0].equals(Constants.DATA_FORWARD_REQUEST))
+            {
+                Log.v(TAG,"Data forward request handling");
+                handleDataForwardRequest(strings[1]);
 
+            }
 
             return;
         }
@@ -479,7 +631,7 @@ public class SimpleDhtProvider extends ContentProvider {
             return "";
         }
 
-        private void updateMyNeighborsLocally(int i, ArrayList<Node> list)
+        protected void updateMyNeighborsLocally(int i, ArrayList<Node> list)
         {
             if(i == 0)
             {
@@ -524,6 +676,24 @@ public class SimpleDhtProvider extends ContentProvider {
                 }
 
                 Log.v(TAG,"My port:"+my_node.getPortNo()+" MY Pre:"+MY_PREDECESSOR_PORT+" My Suc:"+MY_SUCCESSOR_PORT);
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+        protected void handleDataForwardRequest(String object)
+        {
+            try {
+
+                Log.d(TAG, "Data forward request:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                String key = jsonObject.getString(Constants.KEY);
+                String value = jsonObject.getString(Constants.VALUE);
+                //int  count = jsonObject.getInt(Constants.COUNT);
+
+                insertValues(key, value);
+
             } catch (JSONException e) {
                 e.printStackTrace();
             }
