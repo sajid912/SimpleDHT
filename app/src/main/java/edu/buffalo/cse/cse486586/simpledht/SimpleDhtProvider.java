@@ -52,18 +52,18 @@ public class SimpleDhtProvider extends ContentProvider {
     private static String EMULATOR_2_HASH = "";
     private static String EMULATOR_3_HASH = "";
     private static String EMULATOR_4_HASH = "";
-    private static String CHECK = "";
 
-    private static final String EMULATOR0_PORT = "11108";
-    private ArrayList<Node> ringList = new ArrayList<Node>();
     private Node my_node;
-
-//    private String MY_PORT="";
-//    private String MY_NODE_ID="";
-    private String MY_PREDECESSOR_PORT = "";
-    private String MY_SUCCESSOR_PORT = "";
-
-    private static final int SERVER_PORT = 10000;
+    private String MY_PREDECESSOR_PORT;
+    private String MY_SUCCESSOR_PORT;
+    private boolean ringActive = false;
+    private boolean globalFlag = false;
+    private String globalValue = "";
+    private Object valueLock = new Object();
+    private ArrayList<Node> ringList = new ArrayList<Node>();
+    private ArrayList<String> allDataQueryReplyList = new ArrayList<String>();
+    private int allDataQueryReplyCount = 0;
+    private ArrayList<String> activePorts = new ArrayList<String>();
 
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
@@ -118,23 +118,22 @@ public class SimpleDhtProvider extends ContentProvider {
         return uri;
     }
 
+    private String getPredecessorId()
+    {
+        int pre_p = Integer.parseInt(MY_PREDECESSOR_PORT);
+        int pre_id = pre_p/2;
+        String preIdStr = String.valueOf(pre_id);
+        return genHash(preIdStr);
+    }
+
     private void insertValues(String key, String value)
     {
-
         boolean forward = false;
 
-        if(MY_PREDECESSOR_PORT.isEmpty() && MY_SUCCESSOR_PORT.isEmpty())
-        {
-            // Node ring hasn't formed yet, so save locally
-        }
-        else
+        if(ringActive)
         {
             String my_nodeId = my_node.getNodeId();
-            int pre_p = Integer.parseInt(MY_PREDECESSOR_PORT);
-            int pre_id = pre_p/2;
-            String preIdStr = String.valueOf(pre_id);
-            String my_preId = genHash(preIdStr);
-            //String my_sucId = genHash(MY_SUCCESSOR_PORT);
+            String my_preId = getPredecessorId();
 
             checkValues(key);
             Log.d(TAG,"Key:"+key);
@@ -143,59 +142,9 @@ public class SimpleDhtProvider extends ContentProvider {
             int comparision = hashedKey.compareTo(my_nodeId);
             Log.d(TAG,"Comparision of hashedKey and my node id:"+comparision);
 
-            if(hashedKey.compareTo(my_nodeId)>0)
-            {
-                int c1= my_preId.compareTo(my_nodeId);
-                int c2= hashedKey.compareTo(my_preId);
-                Log.d(TAG, "Comparision of pred and my node id:"+c1);
-                Log.d(TAG, "Comparision of hashedKey and pred:"+c2);
+            forward = !saveLocally(hashedKey, my_preId, my_nodeId);
 
-                if(my_preId.compareTo(my_nodeId)>0 && hashedKey.compareTo(my_preId)>0) // My pre is greater than me && key is greater than my pre
-                {
-                    // save the key locally
-                    Log.d(TAG, "Higher than large node, save it");
-                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
-
-                }
-                else
-                {
-                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
-
-                    forward = true; // Forward to successor
-                    Log.d(TAG,"Key greater than me, forward to successor");
-                }
-
-            } else if(hashedKey.compareTo(my_nodeId)<0)
-            {
-                int c1= my_preId.compareTo(my_nodeId);
-                int c2= hashedKey.compareTo(my_preId);
-                Log.d(TAG, "Comparision of pred and my node id:"+c1);
-                Log.d(TAG, "Comparision of hashedKey and pred:"+c2);
-
-                if(hashedKey.compareTo(my_preId)>0)
-                {
-                    // Store the value locally
-                    Log.d(TAG, "Key less than me, greater than pred, save it");
-                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
-
-                }
-                else if(my_preId.compareTo(my_nodeId)>0) // My pre is greater than me && key is less than me
-                {
-                    // save locally
-                    Log.d(TAG, "Smaller than small node, so save it");
-                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
-
-                }
-               else
-                {
-                    //Log.d(TAG, "HashedKey:"+hashedKey+" my_nodeId:"+my_nodeId+" my_predId:"+my_preId);
-                    forward = true;
-                    Log.d(TAG,"Key smaller than me and my pred, so forward");
-                }
-
-            }
         }
-
 
         if(forward)
         {
@@ -220,6 +169,59 @@ public class SimpleDhtProvider extends ContentProvider {
 
     }
 
+    private boolean saveLocally(String hashedKey, String my_preId, String my_nodeId)
+    {
+        boolean save = true;
+
+        if(hashedKey.compareTo(my_nodeId)>0)
+        {
+            int c1= my_preId.compareTo(my_nodeId);
+            int c2= hashedKey.compareTo(my_preId);
+            Log.d(TAG, "Comparision of pred and my node id:"+c1);
+            Log.d(TAG, "Comparision of hashedKey and pred:"+c2);
+
+            if(my_preId.compareTo(my_nodeId)>0 && hashedKey.compareTo(my_preId)>0) // My pre is greater than me && key is greater than my pre
+            {
+                // save the key locally
+                Log.d(TAG, "Higher than large node, save it");
+
+            }
+            else
+            {
+                save = false; // Forward to successor
+                Log.d(TAG,"Key greater than me, forward to successor");
+            }
+
+        } else if(hashedKey.compareTo(my_nodeId)<0)
+        {
+            int c1= my_preId.compareTo(my_nodeId);
+            int c2= hashedKey.compareTo(my_preId);
+            Log.d(TAG, "Comparision of pred and my node id:"+c1);
+            Log.d(TAG, "Comparision of hashedKey and pred:"+c2);
+
+            if(hashedKey.compareTo(my_preId)>0)
+            {
+                // Store the value locally
+                Log.d(TAG, "Key less than me, greater than pred, save it");
+
+            }
+            else if(my_preId.compareTo(my_nodeId)>0) // My pre is greater than me && key is less than me
+            {
+                // save locally
+                Log.d(TAG, "Smaller than small node, so save it");
+
+            }
+            else
+            {
+                save = false;
+                Log.d(TAG,"Key smaller than me and my pred, so forward");
+            }
+
+        }
+
+      return save;
+    }
+
     private String constructDataObject(String key, String value)
     {
         JSONObject jsonObject = new JSONObject();
@@ -238,6 +240,72 @@ public class SimpleDhtProvider extends ContentProvider {
         return jsonObject.toString();
     }
 
+    private void queryValues(String key, String queryObject)
+    {
+        boolean forward = false;
+
+        if(ringActive)
+        {
+            String my_nodeId = my_node.getNodeId();
+            String my_preId = getPredecessorId();
+
+            //checkValues(key);
+            Log.d(TAG,"Key:"+key);
+            String hashedKey = genHash(key);
+
+            //int comparision = hashedKey.compareTo(my_nodeId);
+            //Log.d(TAG,"Comparision of hashedKey and my node id:"+comparision);
+
+            forward = !saveLocally(hashedKey, my_preId, my_nodeId);
+
+        }
+
+        if(forward)
+        {
+            Log.d(TAG,"Forwarding the query request");
+            new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, MY_SUCCESSOR_PORT,
+                    queryObject, Constants.DATA_QUERY_REQUEST);
+        }
+        else
+        {
+            Log.d(TAG,"I have the key, will send query result to requestor");
+
+            try {
+                JSONObject jsonObject = new JSONObject(queryObject);
+                String replyPort = jsonObject.getString(Constants.QUERY_ORIGIN_PORT);
+                new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, replyPort,
+                        constructQueryReplyObject(key, getFileContentFromName(key)), Constants.DATA_QUERY_REPLY);
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+
+        }
+
+    }
+
+    private String queryAllValues()
+    {
+
+        //Log.d(TAG,"replying all data query");
+        StringBuilder allFileContent = new StringBuilder("");
+
+        for(File file: getContext().getFilesDir().listFiles())
+        {
+            String fileName = file.getName();
+            String fileValue = getFileContentFromName(fileName);
+            allFileContent.append(fileName+Constants.KEY_VALUE_SEPARATOR+fileValue+Constants.TEXT_SEPARATOR);
+        }
+
+        String content = allFileContent.toString();
+
+        if(content.isEmpty())
+            content = Constants.TEXT_SEPARATOR; // Sending only text separator when no files are present
+        return constructAllDataQueryReplyObject(content);
+//        new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryOriginPort,
+//                constructAllDataQueryReplyObject(content), Constants.ALL_DATA_QUERY_REPLY);
+
+    }
     @Override
     public boolean onCreate() {
         // TODO Auto-generated method stub
@@ -262,6 +330,149 @@ public class SimpleDhtProvider extends ContentProvider {
         Log.d(TAG, hash.compareTo(EMULATOR_3_HASH)+" check4");
     }
 
+    private void addAllLocalFilesToCursor(MatrixCursor matrixCursor)
+    {
+        // Add the local content
+        for(File file: getContext().getFilesDir().listFiles())
+        {
+            String fileName = file.getName();
+            String fileValue = getFileContentFromName(fileName);
+            matrixCursor.addRow(new Object[]{fileName, fileValue});
+        }
+    }
+
+    private MatrixCursor handleAllDataQueryLocal(MatrixCursor matrixCursor)
+    {
+        try {
+
+            if(ringActive)
+            {
+                if(my_node.getPortNo().equals(Constants.EMULATOR0_PORT))
+                {
+                    // 5554 need not query, it has all active ports locally in ringList
+
+                    activePorts.clear();
+                    for(int i=0;i<ringList.size();i++)
+                        activePorts.add(ringList.get(i).getPortNo());
+
+                    Log.d(TAG,"You have activePorts locally, length is"+activePorts.size());
+                }
+                else if(activePorts.size() == 0) // You dont have active ports, query 5554
+                {
+                    synchronized (valueLock) {
+                        while ( globalFlag != true ) {
+
+                            // get the list of all nodes in the ring from 5554 before you ask for their values
+
+                            if(!my_node.getPortNo().equals(Constants.EMULATOR0_PORT))
+                            {
+                                new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,
+                                        Constants.EMULATOR0_PORT, constructNodeListQueryObject(), Constants.NODE_LIST_QUERY_REQUEST);
+                            }
+                            valueLock.wait();
+
+                        }
+                        // value is now true
+                        globalFlag = false;
+                        Log.d(TAG,"Got all activePorts from 5554, length is"+activePorts.size());
+                }
+
+                }
+
+                synchronized (valueLock)
+                {
+                    while ( globalFlag != true ) {
+
+                        // Now you have activePorts list
+                        for(String port: activePorts) // change this to dynamic ports
+                        {
+                            if(!port.equals(my_node.getPortNo()))
+                            {
+                                new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,
+                                        port, constructAllDataQueryObject(), Constants.ALL_DATA_QUERY_REQUEST);
+                            }
+                        }
+
+                        valueLock.wait();
+
+                    }
+
+                    // value is now true
+
+                    globalFlag = false;
+
+                    // Add the remote content
+                    for(String s: allDataQueryReplyList)
+                    {
+                        String a[] = s.split(Constants.KEY_VALUE_SEPARATOR);
+                        matrixCursor.addRow(new Object[]{a[0], a[1]});
+                    }
+
+                    // Add the local content
+                    addAllLocalFilesToCursor(matrixCursor);
+
+                    allDataQueryReplyCount = 0;
+                    allDataQueryReplyList.clear(); // reset the values
+
+                }
+
+
+            } else {
+                // only the local content
+                addAllLocalFilesToCursor(matrixCursor);
+            }
+
+        } catch ( InterruptedException x ) {
+            Log.d(TAG,"interrupted while waiting");
+        }
+
+        return matrixCursor;
+    }
+
+    private MatrixCursor handleOtherQueryCases(MatrixCursor matrixCursor, String selection)
+    {
+        if(ringActive)
+        {
+            String hashedKey = genHash(selection);
+            String my_preId = getPredecessorId();
+
+            boolean isFileLocal = saveLocally(hashedKey, my_preId, my_node.getNodeId());
+
+            if(isFileLocal)
+            {
+                return returnCursorFromName(selection, matrixCursor);
+            }
+            else // ask the successor for file
+            {
+                try {
+                    synchronized (valueLock) {
+                        while ( globalFlag != true ) {
+
+                            new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,
+                                    MY_SUCCESSOR_PORT, constructDataQueryObject(selection), Constants.DATA_QUERY_REQUEST);
+
+                            valueLock.wait();
+
+                        }
+                        // value is now true
+
+                        globalFlag = false;
+                        matrixCursor.addRow(new Object[]{selection, globalValue});
+                        return matrixCursor;
+
+
+                    }
+                } catch ( InterruptedException x ) {
+                    Log.d(TAG,"interrupted while waiting");
+                }
+            }
+        } else {
+            return returnCursorFromName(selection, matrixCursor);
+        }
+
+        return matrixCursor;
+    }
+
     @Override
     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
             String sortOrder) {
@@ -273,16 +484,10 @@ public class SimpleDhtProvider extends ContentProvider {
 
             if(selection.equals("*")) // return all key value pairs in entire DHT
             {
+
                 MatrixCursor matrixCursor = new MatrixCursor(new String[]{"key", "value"});
+                return handleAllDataQueryLocal(matrixCursor);
 
-                for(File file: getContext().getFilesDir().listFiles())
-                {
-                    String fileName = file.getName();
-                    String fileValue = getFileContentFromName(fileName);
-                    matrixCursor.addRow(new Object[]{fileName, fileValue});
-                }
-
-                return matrixCursor;
             }
             else if(selection.equals("@")) // return key value pairs in the local node
             {
@@ -299,18 +504,24 @@ public class SimpleDhtProvider extends ContentProvider {
             }
             else // other cases
             {
-                String value = getFileContentFromName(selection);
 
                 MatrixCursor matrixCursor = new MatrixCursor(new String[]{"key", "value"});
-                matrixCursor.addRow(new Object[]{selection, value});
-                return matrixCursor;
+                return handleOtherQueryCases(matrixCursor, selection);
             }
 
         } catch (Exception e) {
             Log.e(TAG, "File write failed");
+            e.printStackTrace();
         }
 
         return null;
+    }
+
+    private MatrixCursor returnCursorFromName(String fileName, MatrixCursor cursor)
+    {
+        String value = getFileContentFromName(fileName);
+        cursor.addRow(new Object[]{fileName, value});
+        return cursor;
     }
 
     @Override
@@ -374,9 +585,8 @@ public class SimpleDhtProvider extends ContentProvider {
 
             ServerSocket serverSocket = new ServerSocket(); // <-- create an unbound socket first
             serverSocket.setReuseAddress(true);
-            serverSocket.bind(new InetSocketAddress(SERVER_PORT));
+            serverSocket.bind(new InetSocketAddress(Constants.SERVER_PORT));
             new ServerTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, serverSocket);
-            Log.d(TAG, "Creating socket now");
 
         } catch (IOException e) {
             Log.e(TAG, "Can't create a ServerSocket");
@@ -387,12 +597,85 @@ public class SimpleDhtProvider extends ContentProvider {
         my_node = new Node(genHash(emulatorId), getPortNumber(emulatorId));
         ringList.add(my_node);
 
-        if(!my_node.getPortNo().equals(EMULATOR0_PORT))
+        if(!my_node.getPortNo().equals(Constants.EMULATOR0_PORT))
         {
           //  All emulators except 5554 will request 5554 to join DHT
-            new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, EMULATOR0_PORT, constructNodeJoinObject(), Constants.JOIN_REQUEST);
+            new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, Constants.EMULATOR0_PORT, constructNodeJoinObject(), Constants.JOIN_REQUEST);
 
         }
+    }
+
+    private String constructDataQueryObject(String key)
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 4); // 4 stands for data query request
+            jsonObject.put(Constants.KEY, key);
+            jsonObject.put(Constants.QUERY_ORIGIN_PORT, my_node.getPortNo()); // port no of query node
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
+    }
+
+    private String constructQueryReplyObject(String key, String value)
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 5); // 5 stands for data query reply
+            jsonObject.put(Constants.KEY, key);
+            jsonObject.put(Constants.VALUE, value);
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
+    }
+
+    private String constructAllDataQueryObject()
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 6); // 6 stands for all data query request
+            jsonObject.put(Constants.QUERY_ORIGIN_PORT, my_node.getPortNo()); // port no of query node
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
+    }
+
+    private String constructAllDataQueryReplyObject(String content)
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 7); // 7 stands for all data query reply
+            jsonObject.put(Constants.ALL_DATA_QUERY_CONTENT, content); // query content
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
+    }
+
+    private String constructNodeListQueryObject()
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 8); // 8 stands for node list query
+            jsonObject.put(Constants.MY_PORT, my_node.getPortNo()); // node List placeholder
+            jsonObject.put(Constants.NODE_LIST_CONTENT, ""); // node List placeholder
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
     }
 
     private String constructNodeJoinObject()
@@ -432,14 +715,19 @@ public class SimpleDhtProvider extends ContentProvider {
 
                     Log.d(TAG, "clientTask to port" + msgToSend + " : " + msgs[0]);
 
-                    if(msgs[2].equals(Constants.JOIN_REQUEST))
+                    if(msgs[2].equals(Constants.JOIN_REQUEST) || msgs[2].equals(Constants.ALL_DATA_QUERY_REQUEST)
+                            || msgs[2].equals(Constants.NODE_LIST_QUERY_REQUEST))
                     {
                         InputStream inputStream = socket.getInputStream();
                         BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(inputStream));
                         String reply = bufferedReader.readLine();
                         Log.d(TAG, "Reply status:" + reply);
-                        handleReply(reply);
-
+                        if(msgs[2].equals(Constants.JOIN_REQUEST))
+                            handleJoinRequestReply(reply);
+                        else if(msgs[2].equals(Constants.ALL_DATA_QUERY_REQUEST))
+                            handleAllDataQueryReply(reply);
+                        else if(msgs[2].equals(Constants.NODE_LIST_QUERY_REQUEST))
+                            handleNodeListQueryReply(reply);
                         bufferedReader.close();
                     }
 
@@ -463,13 +751,14 @@ public class SimpleDhtProvider extends ContentProvider {
             return null;
         }
 
-        protected void handleReply(String reply)
+        protected void handleJoinRequestReply(String reply)
         {
             try {
                 JSONObject jsonObject = new JSONObject(reply);
                 int status = jsonObject.getInt(Constants.STATUS);
                 if(status == 1)
                 {
+                    ringActive = true;
                     MY_PREDECESSOR_PORT = jsonObject.getString(Constants.PREDECESSOR_PORT);
                     MY_SUCCESSOR_PORT = jsonObject.getString(Constants.SUCCESSOR_PORT);
                 }
@@ -479,6 +768,68 @@ public class SimpleDhtProvider extends ContentProvider {
                 e.printStackTrace();
             }
         }
+
+
+        protected void handleAllDataQueryReply(String object)
+        {
+            try {
+
+                Log.d(TAG, "All Data query reply:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                String content = jsonObject.getString(Constants.ALL_DATA_QUERY_CONTENT);
+
+                String[] allFileContent = content.split(Constants.TEXT_SEPARATOR);
+
+                for(String s: allFileContent)
+                {
+                    if(!s.isEmpty())
+                        allDataQueryReplyList.add(s); // add each key value pair to the list
+                }
+                allDataQueryReplyCount++;
+
+                if(allDataQueryReplyCount == (activePorts.size()-1)) // Received content from all active emulators
+                {
+                    synchronized ( valueLock ) {
+                        globalFlag = true;
+                        valueLock.notifyAll();  // notifyAll() might be safer...
+                    }
+                }
+
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+        protected void handleNodeListQueryReply(String object)
+        {
+            try {
+
+                Log.d(TAG, "Node list query reply:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                String content = jsonObject.getString(Constants.NODE_LIST_CONTENT);
+
+                String[] allPorts = content.split(Constants.TEXT_SEPARATOR);
+
+                activePorts.clear(); // clear previous values
+                for(String s: allPorts)
+                {
+                    if(!s.isEmpty())
+                        activePorts.add(s); // add each port to the activePorts
+                }
+
+                synchronized ( valueLock ) {
+                    globalFlag = true;
+                    valueLock.notifyAll();  // notifyAll() might be safer...
+                }
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
 
     }
 
@@ -523,6 +874,31 @@ public class SimpleDhtProvider extends ContentProvider {
                         // Data forward request
                         Log.d(TAG,"Status is 3");
                         publishProgress(Constants.DATA_FORWARD_REQUEST, message);
+
+                    } else if(status == 4){
+
+                        Log.d(TAG,"Status is 4");
+                        publishProgress(Constants.DATA_QUERY_REQUEST, message);
+                    } else if(status == 5){
+
+                        Log.d(TAG,"Status is 5");
+                        publishProgress(Constants.DATA_QUERY_REPLY, message);
+                    } else if(status == 6){
+
+                        Log.d(TAG,"Status is 6");
+                        String reply = handleAllDataQueryRequest(message);
+                        bufferedWriter.write(reply);
+                        //publishProgress(Constants.ALL_DATA_QUERY_REQUEST, message);
+                    }
+//                    else if(status == 7){
+//
+//                        Log.d(TAG,"Status is 7");
+//                        publishProgress(Constants.ALL_DATA_QUERY_REPLY, message);
+//                    }
+                    else if (status == 8) {
+                        String reply = handleNodeListQueryRequest(message);
+                        Log.d(TAG,"Status is 8");
+                        bufferedWriter.write(reply);
                     }
 
                     bufferedWriter.flush();
@@ -547,6 +923,7 @@ public class SimpleDhtProvider extends ContentProvider {
             //Log.d(TAG, "Received:" + strings[0] + " My port:" + myPort);
             if(strings[0].equals(Constants.UPDATE_NEIGHBORS_LOCAL))
             {
+                ringActive = true;
                 Log.v(TAG,"Updating neighbors locally");
                 updateNeighbours(remoteNode, predecessorNode, successorNode);
             }
@@ -559,8 +936,27 @@ public class SimpleDhtProvider extends ContentProvider {
             {
                 Log.v(TAG,"Data forward request handling");
                 handleDataForwardRequest(strings[1]);
-
             }
+            else if(strings[0].equals(Constants.DATA_QUERY_REQUEST))
+            {
+                Log.v(TAG,"Data query handling");
+                handleDataQueryRequest(strings[1]);
+            }
+            else if(strings[0].equals(Constants.DATA_QUERY_REPLY))
+            {
+                Log.v(TAG,"Query reply handling");
+                handleQueryReply(strings[1]);
+            }
+//            else if(strings[0].equals(Constants.ALL_DATA_QUERY_REQUEST))
+//            {
+//                Log.v(TAG,"All data Query handling");
+//                handleAllDataQueryRequest(strings[1]);
+//            }
+//            else if(strings[0].equals(Constants.ALL_DATA_QUERY_REPLY))
+//            {
+//                Log.v(TAG,"All data Query reply handling");
+//                handleAllDataQueryReply(strings[1]);
+//            }
 
             return;
         }
@@ -586,12 +982,19 @@ public class SimpleDhtProvider extends ContentProvider {
 
                 for(int i=0;i<list.size();i++)
                 {
-                    Log.d(TAG, "List port:"+list.get(i).getPortNo()+" index:"+i);
+                    Log.d(TAG, "Updating 5554 with neighbor info locally");
 
                     String nodeId = list.get(i).getNodeId();
 
                     if(nodeId.equals(my_node.getNodeId())) // This is to update pre and suc of 5554 node
                         updateMyNeighborsLocally(i, list);
+                }
+
+                for(int i=0;i<list.size();i++)
+                {
+                    Log.d(TAG, "List port:"+list.get(i).getPortNo()+" index:"+i);
+
+                    String nodeId = list.get(i).getNodeId();
 
                     if(nodeId.equals(remoteNode.getNodeId()))
                        {
@@ -651,6 +1054,9 @@ public class SimpleDhtProvider extends ContentProvider {
                 MY_PREDECESSOR_PORT = list.get(i-1).getPortNo();
                 MY_SUCCESSOR_PORT = list.get(i+1).getPortNo();
             }
+
+            Log.v(TAG,"My port:"+my_node.getPortNo()+" MY Pre:"+MY_PREDECESSOR_PORT+" My Suc:"+MY_SUCCESSOR_PORT);
+
         }
 
         protected void updateMyNeighborsFromRemote(String object)
@@ -697,6 +1103,120 @@ public class SimpleDhtProvider extends ContentProvider {
             } catch (JSONException e) {
                 e.printStackTrace();
             }
+        }
+
+        protected void handleDataQueryRequest(String object)
+        {
+            try {
+
+                Log.d(TAG, "Data query request:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                String key = jsonObject.getString(Constants.KEY);
+
+                queryValues(key, object);
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+        protected void handleQueryReply(String object)
+        {
+            try {
+
+                Log.d(TAG, "Data query reply:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                String key = jsonObject.getString(Constants.KEY);
+                String value = jsonObject.getString(Constants.VALUE);
+
+                synchronized ( valueLock ) {
+                    globalValue = value;
+                    globalFlag = true;
+                    valueLock.notifyAll();  // notifyAll() might be safer...
+                }
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+
+        protected String handleAllDataQueryRequest(String object)
+        {
+            try {
+
+                Log.d(TAG, "All Data query request:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                //String queryOriginPort = jsonObject.getString(Constants.QUERY_ORIGIN_PORT);
+
+                return queryAllValues();
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+
+            return "";
+        }
+
+        protected void handleAllDataQueryReply(String object)
+        {
+            try {
+
+                Log.d(TAG, "All Data query reply:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                String content = jsonObject.getString(Constants.ALL_DATA_QUERY_CONTENT);
+
+                String[] allFileContent = content.split(Constants.TEXT_SEPARATOR);
+
+                for(String s: allFileContent)
+                {
+                    allDataQueryReplyList.add(s); // add each key value pair to the list
+                }
+                allDataQueryReplyCount++;
+
+                if(allDataQueryReplyCount == 4) // Received content from all emulators
+                {
+                    synchronized ( valueLock ) {
+                        globalFlag = true;
+                        valueLock.notifyAll();  // notifyAll() might be safer...
+                    }
+                }
+
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+        protected String handleNodeListQueryRequest(String object)
+        {
+            try {
+
+                Log.d(TAG, "Node list query request:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+                StringBuffer nodeListContent = new StringBuffer();
+
+                for(int i=0;i<ringList.size();i++)
+                {
+                    nodeListContent.append(ringList.get(i).getPortNo());
+                    if(i != ringList.size()-1)
+                        nodeListContent.append(Constants.TEXT_SEPARATOR);
+                }
+
+                jsonObject.put(Constants.NODE_LIST_CONTENT, nodeListContent.toString());
+
+                return jsonObject.toString();
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+
+            return "";
         }
     }
 
