@@ -50,4 +50,7 @@ public class Constants {
     public static final String NODE_LIST_QUERY_REQUEST = "nodeListQueryRequest";
     public static final String NODE_LIST_QUERY_REPLY = "nodeListQueryReply";
 
+    public static final String ALL_DATA_DELETE_REQUEST = "allDataDeleteRequest";
+    public static final String SINGLE_DATA_DELETE_REQUEST = "singleFileDeleteRequest";
+
 }

@@ -74,23 +74,15 @@ public class SimpleDhtProvider extends ContentProvider {
 
             if(selection.equals("*")) // delete all key value pairs in entire DHT
             {
-                for(File file: getContext().getFilesDir().listFiles())
-                {
-                    file.delete();
-                }
-
+                handleAllDataDelete();
             }
             else if(selection.equals("@")) // delete key value pairs in the local node
             {
-                for(File file: getContext().getFilesDir().listFiles())
-                {
-                   file.delete();
-                }
-
+                deleteAllLocalFiles();
             }
             else // other cases
             {
-                 getContext().getFileStreamPath(selection).delete();
+                handleOtherDeleteCases(selection);
             }
 
         } catch (Exception e) {
@@ -98,6 +90,97 @@ public class SimpleDhtProvider extends ContentProvider {
         }
 
         return 0;
+    }
+
+    private void deleteAllLocalFiles()
+    {
+        for(File file: getContext().getFilesDir().listFiles())
+        {
+            file.delete();
+        }
+    }
+
+    private void handleAllDataDelete()
+    {
+        try {
+
+            if(ringActive)
+            {
+                if(my_node.getPortNo().equals(Constants.EMULATOR0_PORT))
+                {
+                    // 5554 need not query, it has all active ports locally in ringList
+
+                    activePorts.clear();
+                    for(int i=0;i<ringList.size();i++)
+                        activePorts.add(ringList.get(i).getPortNo());
+
+                    Log.d(TAG,"You have activePorts locally, length is"+activePorts.size());
+                }
+                else if(activePorts.size() == 0) // You dont have active ports, query 5554
+                {
+                    synchronized (valueLock) {
+                        while ( globalFlag != true ) {
+
+                            // get the list of all nodes in the ring from 5554 before you ask for their values
+
+                            if(!my_node.getPortNo().equals(Constants.EMULATOR0_PORT))
+                            {
+                                new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,
+                                        Constants.EMULATOR0_PORT, constructNodeListQueryObject(), Constants.NODE_LIST_QUERY_REQUEST);
+                            }
+                            valueLock.wait();
+
+                        }
+                        // value is now true
+                        globalFlag = false;
+                        Log.d(TAG,"Got all activePorts from 5554, length is"+activePorts.size());
+                    }
+
+                }
+
+                // Inform everybody else to delete their local files and don't care for their reply
+                for(String port: activePorts)
+                {
+                    if(!port.equals(my_node.getPortNo()))
+                    {
+                        new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,
+                                port, constructAllDataDeleteObject(), Constants.ALL_DATA_DELETE_REQUEST);
+                    }
+                    else
+                        deleteAllLocalFiles();
+                }
+
+            } else {
+                // delete all local files
+                deleteAllLocalFiles();
+            }
+
+        } catch ( InterruptedException x ) {
+            Log.d(TAG,"interrupted while waiting");
+        }
+    }
+
+    private void handleOtherDeleteCases(String selection)
+    {
+        if(ringActive)
+        {
+            String hashedKey = genHash(selection);
+            String my_preId = getPredecessorId();
+
+            boolean isFileLocal = saveLocally(hashedKey, my_preId, my_node.getNodeId());
+
+            if(isFileLocal)
+            {
+                getContext().getFileStreamPath(selection).delete();
+            }
+            else // ask the successor to delete
+            {
+                new clientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,
+                        MY_SUCCESSOR_PORT, constructDataDeleteObject(selection), Constants.SINGLE_DATA_DELETE_REQUEST);
+            }
+        } else {
+            deleteAllLocalFiles();
+        }
     }
 
     @Override
@@ -694,6 +777,33 @@ public class SimpleDhtProvider extends ContentProvider {
         return jsonObject.toString();
     }
 
+    private String constructAllDataDeleteObject()
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 9); // 9 stands for all data delete
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
+    }
+
+    private String constructDataDeleteObject(String selection)
+    {
+        JSONObject jsonObject = new JSONObject();
+
+        try {
+            jsonObject.put(Constants.STATUS, 10); // 10 stands for single data file delete
+            jsonObject.put(Constants.KEY, selection);
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return jsonObject.toString();
+    }
+
     private class clientTask extends AsyncTask<String, Void, Void> {
 
         @Override
@@ -900,6 +1010,14 @@ public class SimpleDhtProvider extends ContentProvider {
                         Log.d(TAG,"Status is 8");
                         bufferedWriter.write(reply);
                     }
+                    else if (status == 9) {
+                        Log.d(TAG,"Status is 9");
+                        publishProgress(Constants.ALL_DATA_DELETE_REQUEST, message);
+                    }
+                    else if (status == 10) {
+                        Log.d(TAG,"Status is 10");
+                        publishProgress(Constants.SINGLE_DATA_DELETE_REQUEST, message);
+                    }
 
                     bufferedWriter.flush();
                     bufferedWriter.close();
@@ -957,6 +1075,16 @@ public class SimpleDhtProvider extends ContentProvider {
 //                Log.v(TAG,"All data Query reply handling");
 //                handleAllDataQueryReply(strings[1]);
 //            }
+            else if(strings[0].equals(Constants.ALL_DATA_DELETE_REQUEST))
+            {
+                Log.v(TAG,"All Data delete request");
+                deleteAllLocalFiles();
+            }
+            else if(strings[0].equals(Constants.SINGLE_DATA_DELETE_REQUEST))
+            {
+                Log.v(TAG,"Single file delete request");
+                handleFileDeleteRequest(strings[1]);
+            }
 
             return;
         }
@@ -1218,6 +1346,25 @@ public class SimpleDhtProvider extends ContentProvider {
 
             return "";
         }
+
+        protected void handleFileDeleteRequest(String object)
+        {
+            try {
+
+                Log.d(TAG, "File delete request:" + object);
+
+                JSONObject jsonObject = new JSONObject(object);
+
+                String selection = jsonObject.getString(Constants.KEY);
+
+                getContext().getFileStreamPath(selection).delete();
+
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+
+        }
+
     }
 
     private void updateNeighbours(Node r, Node p, Node s)
